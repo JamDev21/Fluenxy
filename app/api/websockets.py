@@ -31,8 +31,37 @@ async def room_websocket(websocket: WebSocket, group_id: UUID, user_id: UUID):
 
                 if event_type == "join":
                     username = data.get("username", "Unknown User")
+                    topic = data.get("topic", "General Conversation")
                     manager.set_username(group_id, user_id, username)
                 
+                    room = manager.active_rooms.get(group_id)
+
+                    if room:
+                        room.topic = topic # Store the topic in RAM for the session
+                        
+                        # 2. THE ICEBREAKER LOGIC: Trigger only when at least 2 people are present
+                        if len(room.active_usernames) >= 2 and not room.icebreaker_sent:
+                            room.icebreaker_sent = True
+                            
+                            # Pick the first person in the room to break the ice
+                            first_user_name = list(room.active_usernames.values())[0]
+                            
+                            # Wait 2 seconds so the UI has time to fully render the video feeds
+                            await asyncio.sleep(2.0)
+                            
+                            logger.info(f"Triggering automatic Icebreaker for room {group_id}")
+                            
+                            icebreaker_msg = {
+                                "sender_name": "AI_MODERATOR",
+                                "text": f"Welcome to Fluenxy! Today's topic is: {room.topic}. {first_user_name}, why don't you start us off?",
+                                "timestamp": time.time(),
+                                "event": "ai_intervention"
+                            }
+
+                            # Inject into transcript memory and broadcast to all users
+                            manager.update_activity(group_id, icebreaker_msg)
+                            await manager.broadcast_to_group(group_id, icebreaker_msg)
+
                 if event_type == "speaking_start":
                     # ENGAGE LOCK: User is making sound, block AI interventions
                     manager.set_active_speaker(group_id, user_id)
@@ -70,7 +99,7 @@ async def room_websocket(websocket: WebSocket, group_id: UUID, user_id: UUID):
                             )
                             
                             ai_message = {
-                                "sender_id": "AI_MODERATOR",
+                                "sender_name": "AI_MODERATOR",
                                 "text": ai_response_text,
                                 "timestamp": time.time(),
                                 "event": "ai_intervention"
@@ -113,7 +142,7 @@ async def room_websocket(websocket: WebSocket, group_id: UUID, user_id: UUID):
                         )
                         
                         ai_message = {
-                            "sender_id": "AI_MODERATOR",
+                            "sender_name": "AI_MODERATOR",
                             "text": ai_response_text,
                             "timestamp": time.time(),
                             "event": "ai_intervention"

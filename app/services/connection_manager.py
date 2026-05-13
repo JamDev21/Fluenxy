@@ -1,9 +1,12 @@
 from fastapi import WebSocket
 from typing import Dict, List, Optional
 from uuid import UUID
+import asyncio
 from dataclasses import dataclass, field
 import time
 import logging
+
+from app.services.data_diet import process_post_meeting_feedback
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +32,10 @@ class RoomState:
     # Activate Speaker Lock
     active_speaker: Optional[UUID] = None
     active_speaker_timestamp: float = field(default_factory=time.time)
+
+    # Icebreaker State
+    topic: str = "General Conversation"
+    icebreaker_sent: bool = False
 
 # Connection Manager 
 
@@ -70,12 +77,20 @@ class ConnectionManager:
                     del room.active_usernames[user_id]
                 logger.info(f"User {user_id} left room {group_id}.")
             
-            # Note: We DO NOT delete the room object here if empty.
-            # We leave the RoomState alive so the background job can send 
-            # the transcript_buffer to DeepSeek safely.
+            # TRIGGER THE DATA DIET WORKFLOW
             if not room.connections:
-                logger.info(f"Room {group_id} connections empty. Awaiting Data Diet process.")
-    
+                logger.info(f"Room {group_id} connections empty. Initiating Data Diet background task.")
+                
+                # Start the background task to process and delete the transcript
+                asyncio.create_task(
+                    process_post_meeting_feedback(
+                        group_id=group_id,
+                        transcript_buffer=room.transcript_buffer,
+                        active_usernames=room.active_usernames,
+                        manager_instance=self
+                    )
+                )
+            
     def set_username(self, group_id: UUID, user_id: UUID, username: str):
         if group_id in self.active_rooms:
             self.active_rooms[group_id].active_usernames[user_id] = username
