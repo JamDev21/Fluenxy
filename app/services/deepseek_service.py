@@ -46,4 +46,59 @@ class DeepSeekService:
             # Fallback to guarantee the room still opens even if the AI API is down
             return "If you could travel anywhere in the world tomorrow, where would you go and why?"
 
+
+    async def generate_grammar_feedback(self, transcript_buffer: List[dict], active_usernames: dict) -> str:
+        """
+        Analyzes the full meeting transcript and generates personalized grammatical 
+        feedback for each participant in a strict JSON format.
+        """
+        
+        formatted_history = "\n".join(
+            [f"{msg.get('sender_name')}: {msg.get('text')}" 
+             for msg in transcript_buffer 
+             if msg.get('text') and msg.get('sender_name') != 'AI_MODERATOR']
+        )
+        
+        
+        if not formatted_history.strip():
+            return "{}"
+        
+        users_list = ", ".join(active_usernames.values())
+        
+        prompt = f"""
+        You are an expert ESL (English as a Second Language) evaluator.
+        Analyze the following conversation from a B1 English club.
+        Participants: {users_list}
+        
+        Transcript:
+        {formatted_history}
+        
+        TASK: Return a STRICT JSON object containing feedback for each user who spoke.
+        Do NOT wrap the JSON in markdown formatting. Just return the raw JSON.
+        
+        Expected JSON Schema:
+        {{
+            "User Name": {{
+                "strengths": "What they did well in 1 short sentence",
+                "improvement_area": "One specific grammar or vocabulary correction",
+                "example_correction": "Incorrect phrase -> Correct phrase"
+            }}
+        }}
+        """
+
+        try:
+            response = await client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1000,
+                
+                response_format={"type": "json_object"} 
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"DeepSeek Feedback Generation Failed: {e}")
+            return "{}"
+
+
 deepseek_service = DeepSeekService()
