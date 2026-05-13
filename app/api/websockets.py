@@ -5,6 +5,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from uuid import UUID
 
 from app.services.connection_manager import manager
+from app.services.groq_service import groq_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,6 +28,10 @@ async def room_websocket(websocket: WebSocket, group_id: UUID, user_id: UUID):
                 data = await asyncio.wait_for(websocket.receive_json(), timeout=SILENCE_THRESHOLD_SECONDS)
                 
                 event_type = data.get("type")
+
+                if event_type == "join":
+                    username = data.get("username", "Unknown User")
+                    manager.set_username(group_id, user_id, username)
                 
                 if event_type == "speaking_start":
                     # ENGAGE LOCK: User is making sound, block AI interventions
@@ -35,11 +40,13 @@ async def room_websocket(websocket: WebSocket, group_id: UUID, user_id: UUID):
                 elif event_type == "transcript":
                     # RELEASE LOCK: User finished the phrase
                     manager.clear_active_speaker(group_id)
+                    room = manager.active_rooms.get(group_id)
+                    username = room.active_usernames.get(user_id, str(user_id)) if room else str(user_id)
                     
-                    incoming_text = data.get("text", "")
+                    #incoming_text = data.get("text", "")
                     transcript_line = {
-                        "sender_id": str(user_id),
-                        "text": incoming_text,
+                        "sender_name": username, # Using real name for the transcript now
+                        "text": data.get("text", ""),
                         "timestamp": time.time(),
                         "event": "transcript"
                     }
@@ -53,11 +60,14 @@ async def room_websocket(websocket: WebSocket, group_id: UUID, user_id: UUID):
                         room.is_ai_computing = True
                         manager.clear_active_speaker(group_id) # Release lock just in case
                         
-                        logger.info(f"User {user_id} triggered SOS in room {group_id}.")
+                        #logger.info(f"User {user_id} triggered SOS in room {group_id}.")
                         
                         try:
-                            
-                            ai_response_text = "I'm here to help! What word are you looking for?"
+                            active_users = list(room.active_usernames.values())
+                            ai_response_text = await groq_service.generate_sos_intervention(
+                                transcript_buffer=room.transcript_buffer,
+                                active_users=active_users
+                            )
                             
                             ai_message = {
                                 "sender_id": "AI_MODERATOR",
@@ -91,11 +101,16 @@ async def room_websocket(websocket: WebSocket, group_id: UUID, user_id: UUID):
                 
                 if current_silence >= SILENCE_THRESHOLD_SECONDS and not room.is_ai_computing and not room.active_speaker:
                     room.is_ai_computing = True
-                    logger.info(f"Room {group_id} silent for {current_silence:.1f}s. Triggering AI...")
+                    #logger.info(f"Room {group_id} silent for {current_silence:.1f}s. Triggering AI...")
                     
                     try:
-                        
-                        ai_response_text = "It's a bit quiet! Who wants to share their opinion next?"
+                        # Extract the dynamic list of current real names
+                        active_users = list(room.active_usernames.values())
+
+                        ai_response_text = await groq_service.generate_silence_intervention(
+                            transcript_buffer=room.transcript_buffer,
+                            active_users=active_users
+                        )
                         
                         ai_message = {
                             "sender_id": "AI_MODERATOR",

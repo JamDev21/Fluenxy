@@ -17,6 +17,7 @@ class RoomState:
     """
     # Mapping: { user_id: WebSocket } - Prevents duplicate sockets per user
     connections: Dict[UUID, WebSocket] = field(default_factory=dict)
+    active_usernames: Dict[UUID, str] = field(default_factory=dict)
     
     # Stores the raw conversation for the DeepSeek Data Diet
     transcript_buffer: List[dict] = field(default_factory=list)
@@ -64,6 +65,9 @@ class ConnectionManager:
             # Ensure we only remove the matching socket (handles fast reconnections)
             if user_id in room.connections and room.connections[user_id] == websocket:
                 del room.connections[user_id]
+                # Cleanup the username
+                if user_id in room.active_usernames:
+                    del room.active_usernames[user_id]
                 logger.info(f"User {user_id} left room {group_id}.")
             
             # Note: We DO NOT delete the room object here if empty.
@@ -71,6 +75,11 @@ class ConnectionManager:
             # the transcript_buffer to DeepSeek safely.
             if not room.connections:
                 logger.info(f"Room {group_id} connections empty. Awaiting Data Diet process.")
+    
+    def set_username(self, group_id: UUID, user_id: UUID, username: str):
+        if group_id in self.active_rooms:
+            self.active_rooms[group_id].active_usernames[user_id] = username
+            logger.info(f"Registered username '{username}' for UUID {user_id} in room {group_id}")
 
     async def broadcast_to_group(self, group_id: UUID, message: dict):
         if group_id in self.active_rooms:
