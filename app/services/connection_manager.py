@@ -1,5 +1,5 @@
 from fastapi import WebSocket
-from typing import Dict, List
+from typing import Dict, List, Optional
 from uuid import UUID
 from dataclasses import dataclass, field
 import time
@@ -23,6 +23,11 @@ class RoomState:
     
     # Tracks the exact timestamp of the last spoken message (for AI silence detection)
     last_activity: float = field(default_factory=time.time)
+    is_ai_computing: bool = False
+
+    # Activate Speaker Lock
+    active_speaker: Optional[UUID] = None
+    active_speaker_timestamp: float = field(default_factory=time.time)
 
 # Connection Manager 
 
@@ -96,5 +101,18 @@ class ConnectionManager:
         if group_id in self.active_rooms:
             del self.active_rooms[group_id]
             logger.info(f"Room {group_id} fully wiped from memory (Data Diet complete).")
+
+    def set_active_speaker(self, group_id: UUID, user_id: UUID):
+        """Locks the room so the AI knows someone is currently formulating a thought."""
+        if group_id in self.active_rooms:
+            room = self.active_rooms[group_id]
+            room.active_speaker = user_id
+            room.active_speaker_timestamp = time.time()
+            logger.info(f"User {user_id} started speaking in room {group_id}")
+
+    def clear_active_speaker(self, group_id: UUID):
+        """Releases the speaking lock once the phrase is complete."""
+        if group_id in self.active_rooms:
+            self.active_rooms[group_id].active_speaker = None
 
 manager = ConnectionManager()
